@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "bitgn-api-connectrpc-python==0.8.1.1.20260311140232+3c669d475404",
+    "bitgn-api-connectrpc-python==0.8.1.1.20260311154823+6e89566900e8",
 ]
 
 [[tool.uv.index]]
