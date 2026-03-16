@@ -17,15 +17,22 @@ CLI_CLR = "\x1B[0m"
 
 
 def main() -> None:
+
+    # optional task ids could be included as tasks to run, e.g. `python main.py task1 task2`
+    task_filter = os.sys.argv[1:]
+
+
     scores = []
     try:
         client = HarnessServiceClientSync(BITGN_URL)
         print("Connecting to BitGN", client.status(StatusRequest()))
         res = client.get_benchmark(GetBenchmarkRequest(benchmark_id="bitgn/sandbox"))
-        print(f"{EvalPolicy.Name(res.policy)} benchmark: {res.benchmark_id} with {len(res.tasks)} tasks.\n{res.description}")
+        print(f"{EvalPolicy.Name(res.policy)} benchmark: {res.benchmark_id} with {len(res.tasks)} tasks.\n{CLI_GREEN}{res.description}{CLI_CLR}")
 
 
         for t in res.tasks:
+            if task_filter and t.task_id not in task_filter:
+                continue
             print("=" * 40)
             print(f"Starting Task: {t.task_id}")
 
