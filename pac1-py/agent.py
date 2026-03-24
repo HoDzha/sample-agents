@@ -174,37 +174,62 @@ def _format_tree_entry(entry, prefix: str = "", is_last: bool = True) -> list[st
     return lines
 
 
-def _format_tree_response(result) -> str:
+def _render_command(command: str, body: str) -> str:
+    return f"{command}\n{body}"
+
+
+def _format_tree_response(cmd: Req_Tree, result) -> str:
     root = result.root
     if not root.name:
-        return "."
+        body = "."
+    else:
+        lines = [root.name]
+        children = list(root.children)
+        for idx, child in enumerate(children):
+            lines.extend(_format_tree_entry(child, is_last=idx == len(children) - 1))
+        body = "\n".join(lines)
 
-    lines = [root.name]
-    children = list(root.children)
-    for idx, child in enumerate(children):
-        lines.extend(_format_tree_entry(child, is_last=idx == len(children) - 1))
-    return "\n".join(lines)
+    root_arg = cmd.root or "/"
+    level_arg = f" -L {cmd.level}" if cmd.level > 0 else ""
+    return _render_command(f"tree{level_arg} {root_arg}", body)
 
 
-def _format_list_response(result) -> str:
+def _format_list_response(cmd: Req_List, result) -> str:
     # AICODE-NOTE: PAC1 feeds tool output back into the LLM verbatim, so keep
-    # `list` compact and shell-like instead of protobuf JSON to preserve tokens
-    # for reasoning while still making directories visually obvious.
+    # tree/ls/cat compact and shell-like instead of protobuf JSON, but repeat
+    # the invoked command first so the model keeps both the action and output in
+    # context after several steps.
     if not result.entries:
-        return "."
-    return "\n".join(
+        body = "."
+    else:
+        body = "\n".join(
         f"{entry.name}/" if entry.is_dir else entry.name
         for entry in result.entries
-    )
+        )
+    return _render_command(f"ls {cmd.path}", body)
+
+
+def _format_read_response(cmd: Req_Read, result) -> str:
+    if cmd.start_line > 0 or cmd.end_line > 0:
+        start = cmd.start_line if cmd.start_line > 0 else 1
+        end = cmd.end_line if cmd.end_line > 0 else "$"
+        command = f"sed -n '{start},{end}p' {cmd.path}"
+    elif cmd.number:
+        command = f"cat -n {cmd.path}"
+    else:
+        command = f"cat {cmd.path}"
+    return _render_command(command, result.content)
 
 
 def _format_result(cmd: BaseModel, result) -> str:
     if result is None:
         return "{}"
     if isinstance(cmd, Req_Tree):
-        return _format_tree_response(result)
+        return _format_tree_response(cmd, result)
     if isinstance(cmd, Req_List):
-        return _format_list_response(result)
+        return _format_list_response(cmd, result)
+    if isinstance(cmd, Req_Read):
+        return _format_read_response(cmd, result)
     return json.dumps(MessageToDict(result), indent=2)
 
 
