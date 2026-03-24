@@ -1,0 +1,171 @@
+syntax = "proto3";
+// Provides API to access the bitgn PCM agent runtime for one trial.
+package bitgn.vm.pcm;
+
+option go_package = "bitgn.com/harness/v2/modules/pcm/internal/buf;buf";
+
+// Read full file contents given a path
+message ReadRequest {
+  string path = 1;
+}
+
+message ReadResponse {
+  // Canonicalized file path after normalization.
+  string path = 1;
+  string content = 2;
+}
+
+// Write full file contents given a path
+message WriteRequest {
+  string path = 1;
+  string content = 2;
+}
+message WriteResponse { }
+
+message DeleteRequest {
+  string path = 1;
+}
+
+message DeleteResponse { }
+
+message MkDirRequest {
+  string path = 1;
+}
+
+message MkDirResponse { }
+
+message MoveRequest {
+  string from_name = 1;
+  string to_name = 2;
+}
+
+message MoveResponse { }
+
+message ListRequest {
+  string name = 1;
+}
+
+message ListResponse {
+  message Entry {
+    string name = 1;
+    bool is_dir = 2;
+  }
+
+  repeated Entry entries =1;
+}
+
+message TreeRequest {
+  // May point to either a folder or a file. Empty means the workspace root.
+  string root = 1;
+  // Maximum traversal depth from `root`, similar to `tree -L`. Zero means
+  // unlimited recursion to preserve existing behavior for older clients.
+  int32 depth = 2;
+}
+
+
+
+message TreeResponse {
+
+  message Entry {
+    string name = 1;
+    bool is_dir = 2;
+    repeated Entry children = 3;
+  }
+
+  // Canonicalized root entry after normalization. Clients assemble full paths
+  // from the requested root plus the recursive child names.
+  Entry root = 1;
+}
+
+message FindRequest {
+  string root = 1;
+  string name = 2;
+
+  enum Type {
+    // Zero is intentionally the broadest search mode here so absent client input
+    // defaults to "all" instead of an invalid or half-configured request state.
+    // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
+    TYPE_ALL  =0;
+    TYPE_FILES = 1;
+    TYPE_DIRS = 2;
+  }
+
+  Type type = 3;
+  int32 limit = 4;
+}
+
+message FindResponse {
+  repeated string items = 1;
+}
+
+message SearchRequest {
+  // Search root. Empty means the workspace root.
+  string root = 1;
+  // Regular expression pattern
+  string pattern = 2;
+  // Maximum number of matches to return. Zero means no explicit limit.
+  int32 limit = 3;
+}
+
+message SearchResponse {
+  message Match {
+    string path = 1;
+    int32 line = 2;
+    string line_text = 3;
+  }
+
+  repeated Match matches = 1;
+}
+
+message ContextRequest {
+
+}
+message ContextResponse {
+  int64 unix_time = 1;
+
+  // uses RFC 3339
+  string time = 2;
+}
+
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_OK = 1;
+  // Answer is denied because it looks like a threat
+  OUTCOME_DENIED_SECURITY = 2;
+  // Agent needs clarifications before it may continue
+  OUTCOME_NONE_CLARIFICATION = 3;
+  // This functionality is not supported
+  OUTCOME_NONE_UNSUPPORTED = 4;
+  // Agent is hitting an internal error that it can't  resolve
+  OUTCOME_ERR_INTERNAL = 5;
+}
+
+message AnswerRequest {
+
+
+  string message = 1;
+  Outcome outcome = 2;
+  repeated string refs = 3;
+
+}
+
+message AnswerResponse{
+
+}
+
+
+// buf:lint:ignore SERVICE_SUFFIX
+// service for the PCM runtime
+service PcmRuntime {
+  rpc Read(ReadRequest) returns (ReadResponse);
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc MkDir(MkDirRequest) returns (MkDirResponse);
+  rpc Move(MoveRequest) returns (MoveResponse);
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Tree(TreeRequest) returns (TreeResponse);
+  rpc Find(FindRequest) returns (FindResponse);
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc Context(ContextRequest) returns (ContextResponse);
+  rpc Answer(AnswerRequest) returns (AnswerResponse);
+}

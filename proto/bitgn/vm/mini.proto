@@ -1,0 +1,103 @@
+syntax = "proto3";
+// Provides API to access the bitgn "mini" agent runtime for one trial.
+package bitgn.vm.mini;
+
+option go_package = "bitgn.com/harness/v2/modules/demo/internal/buf;buf";
+
+import "google/protobuf/empty.proto";
+
+// Root KB reading
+message Outline{
+  // For folder outlines this is the child name relative to the requested folder.
+  // For direct file outlines this is the normalized full file path.
+  string path = 1;
+  // Only level-1 markdown headings (`# ...`) are surfaced here.
+  repeated string headers = 2;
+}
+
+message OutlineRequest {
+  // May point to either a folder or a file. `/` means the workspace root.
+  string path = 1;
+}
+
+message OutlineResponse {
+  // Canonicalized request path.
+  string path = 1;
+  repeated string folders = 2;
+  repeated Outline files = 3;
+}
+
+message ReadRequest {
+  string path = 1;
+}
+
+message ReadResponse {
+  // Canonicalized file path after normalization.
+  string path = 1;
+  string content = 2;
+}
+
+// some extra
+
+message ListRequest {
+  string path = 1;
+}
+
+message ListResponse {
+  repeated string folders = 1;
+  repeated string files = 2;
+}
+
+message SearchRequest {
+  // AICODE-NOTE: This field is forward-looking. The current demo runtime still
+  // searches the whole workspace and ignores `path`, but keeping it here avoids
+  // a later breaking change once search becomes path-scoped.
+  string path = 1;
+  // POSIX regular expression, not a glob or plain substring.
+  string pattern = 2;
+  // Maximum snippet count to return. The demo runtime rejects values above 10.
+  int32 count = 3;
+}
+
+message Snippet {
+  string file = 1;
+  string match = 2;
+  // Zero-based line number in the current demo runtime.
+  int32 line = 3;
+}
+
+message SearchResponse {
+  repeated Snippet snippets = 1;
+}
+
+message AnswerRequest {
+  string answer = 1;
+  // Caller-supplied grounding references recorded alongside the answer.
+  // The runtime stores them verbatim and does not resolve them.
+  repeated string refs = 2;
+}
+
+message DeleteRequest {
+  string path = 1;
+}
+
+message WriteRequest {
+  string path = 1;
+  // Writing JSON inside a folder with a sibling `_rules.txt` triggers schema validation.
+  string content = 2;
+}
+
+// buf:lint:ignore SERVICE_SUFFIX
+// Allows agents to access the runtime of one concrete evaluation trial.
+// Callers reach this service through the per-trial `harness_url` returned by the control plane.
+service MiniRuntime {
+  // Non-recursive tree view. Folder requests list only immediate children.
+  rpc Outline(OutlineRequest) returns (OutlineResponse);
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Read(ReadRequest) returns (ReadResponse);
+  rpc Write(WriteRequest) returns (google.protobuf.Empty);
+  rpc Delete(DeleteRequest) returns (google.protobuf.Empty);
+  // Terminal answer submission; the demo runtime accepts only one answer per trial.
+  rpc Answer(AnswerRequest) returns (google.protobuf.Empty);
+}

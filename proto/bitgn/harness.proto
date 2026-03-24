@@ -1,0 +1,302 @@
+syntax = "proto3";
+
+import "google/protobuf/struct.proto";
+
+// Harness API - provides control-plane access to the BitGN Platform and its per-trial agent runtimes.
+package bitgn.harness;
+
+option go_package = "bitgn.com/harness/v2/api/buf;buf";
+
+message StatusRequest {}
+
+message StatusResponse {
+  string status = 1;
+  // platform version
+  string version = 2;
+}
+
+
+enum EvalPolicy {
+  EVAL_POLICY_UNSPECIFIED = 0;
+  // in Blind mode we hide hints and defer evaluations until later. This means that leaderboards will be populated only when the competition ends and benchmark goes open
+  EVAL_POLICY_BLIND = 1;
+  // in Open mode we execute evaluations at the end of the trial, also hints are visible
+  EVAL_POLICY_OPEN = 2;
+}
+
+// Pulls information about current benchmark, including task samples. Id is in format org/bench
+message GetBenchmarkRequest {
+  // e.g. bitgn/sandbox
+  string benchmark_id = 1;
+}
+
+enum LinkKind {
+  LINK_KIND_UNSPECIFIED = 0;
+  LINK_KIND_SAMPLE = 1;
+  LINK_KIND_LANDING = 2;
+  LINK_KIND_NEWS = 3;
+  LINK_KIND_SDK = 4;
+}
+
+message Link {
+  string url = 1;
+  LinkKind kind = 2;
+}
+
+message GetBenchmarkResponse {
+  string benchmark_id = 1;
+  string description = 2;
+  // Runtime/tool-surface identifier, e.g. `bitgn/mini-harness`.
+  string harness_id = 3;
+  EvalPolicy policy = 4;
+  repeated Link links = 5;
+  message Task {
+    string task_id = 1;
+    // Catalog preview generated from a deterministic sample seed.
+    // The real trial instruction is regenerated from the trial id seed and may differ.
+    string preview =  2;
+    // hint will be empty for blind benchmarks
+    string hint = 3;
+  }
+
+  // list of different tasks that we cover in the benchmark.
+  repeated Task tasks = 6;
+}
+
+
+
+
+
+message StartTrialRequest {
+  // Prepared trial identifier, typically created as part of a run.
+  // Playground sessions already come back ready to use and do not need this call.
+  string trial_id = 1;
+}
+
+enum TrialState {
+  TRIAL_STATE_UNSPECIFIED = 0;
+  TRIAL_STATE_NEW = 1;
+  TRIAL_STATE_RUNNING = 2;
+  TRIAL_STATE_DONE = 3;
+  TRIAL_STATE_ERROR = 4;
+}
+
+
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  // run was created and started
+  RUN_STATE_RUNNING = 1;
+  RUN_STATE_PENDING_EVAL = 2;
+  RUN_STATE_EVALUATED = 3;
+
+}
+
+message StartTrialResponse {
+  string trial_id = 1;
+  string benchmark_id = 2;
+  // e.g. t01
+  string task_id = 3;
+  string run_id = 4;
+  string instruction = 5;
+  // Trial-local agent runtime endpoint for the harness workspace/tool surface.
+  // Agents use this URL for runtime operations, not the control-plane API path.
+  string harness_url = 6;
+}
+
+message StartPlaygroundResponse {
+  string trial_id = 1;
+  string benchmark_id = 2;
+  // e.g. t01
+  string task_id = 3;
+  string instruction = 4;
+  // Same agent runtime endpoint shape as StartTrialResponse, but for a standalone ad-hoc trial.
+  string harness_url = 5;
+}
+
+
+
+message EndTrialRequest {
+  string trial_id = 1;
+}
+
+
+
+message EndTrialResponse {
+  string trial_id = 1;
+  TrialState state =2;
+  // score will be missing in blind benchmarks (until they are open)
+  optional float score = 3;
+  repeated string score_detail = 4;
+}
+
+message GetTrialRequest{
+  string trial_id = 1;
+  // Opaque cursor from the previous response; `0` means start from the first page.
+  int64 cursor = 2;
+}
+
+message GetTrialResponse {
+  string trial_id = 1;
+  string instruction = 2;
+  string benchmark_id = 3;
+  string task_id = 4;
+  // set if trial failed
+  string error = 5;
+
+  // score will be set if evaluated
+  optional float score = 6;
+
+  repeated string score_detail = 7;
+
+  TrialState state = 8;
+  // Human-facing activity feed from the harness instance, not a replayable event stream.
+  repeated LogLine logs = 9;
+  // Opaque cursor to continue fetching logs.
+  int64 next_cursor = 10;
+  // will be set if associated with trial run
+  string run_id = 11;
+}
+
+enum LogKind {
+  LOG_KIND_UNSPECIFIED = 0;
+  // system notifications from the harness and platform
+  LOG_KIND_SYSTEM = 1;
+  // Request from agent to the environment
+  LOG_KIND_REQUEST = 2;
+  // Response of env to the agent
+  LOG_KIND_RESPONSE = 3;
+  // Some kind of failure (e.g. env failure or bad request)
+  LOG_KIND_ERROR = 4;
+  // Change detected in the environment
+  LOG_KIND_CHANGE = 5;
+  // Telemetry from an agent
+  LOG_KIND_TELEMETRY = 6;
+  // Free logs from an agent
+  LOG_KIND_USER = 7;
+}
+
+// represents nicely renderable log line for humans and UX
+message LogLine {
+  // Display-oriented timestamp. Use `unix_ms` for ordering and machine logic.
+  string time = 1;
+  // unix ms
+  int64 unix_ms = 2;
+  // human-readable text display
+  string text = 3;
+  // log category (for filtering and human display)
+  LogKind kind = 4;
+  // Underlying entry type for richer rendering in clients.
+  string type = 5;
+  // Best-effort structured payload for UI rendering. Omitted when plain text is enough.
+  optional google.protobuf.Struct data = 6;
+}
+
+
+message StartRunRequest {
+  string benchmark_id = 1;
+  string name = 2;
+}
+
+message StartRunResponse {
+  string run_id = 1;
+  string benchmark_id = 2;
+  repeated string trial_ids = 3;
+}
+
+// used in displays or to show status on a high level
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message TrialStats {
+  int32 new_count = 1;
+  int32 running_count = 2;
+  int32 done_count = 3;
+  int32 error_count = 4;
+}
+
+// brief summary of a trial
+message TrialHead {
+  string trial_id = 1;
+  string task_id = 2;
+  // Sequential number within the run, not a globally meaningful identifier.
+  int32 num = 3;
+  TrialState state = 4;
+  // will be populated only if task has started
+  optional string instruction = 5;
+  // will be populated after evaluation
+  optional float score = 6;
+
+  // error message, if trial failed
+  string error = 7;
+
+}
+
+enum RunKind {
+  RUN_KIND_UNSPECIFIED = 0;
+  // Runs that were done against blind benchmarks
+  RUN_KIND_BLIND = 1;
+  // run was done when Benchmark was open, agent had access to scores and feedback
+  RUN_KIND_OPEN = 2;
+  // private runs, not part of leaderboards and can't be scored
+  RUN_KIND_PRIVATE = 3;
+}
+
+message GetRunResponse {
+  string run_id = 1;
+  string benchmark_id = 2;
+  // custom name for the run
+  string name = 3;
+  // score, if it was evaluated
+  optional float score = 4;
+  TrialStats stats = 5;
+  repeated TrialHead trials = 6;
+
+  RunState state = 7;
+  RunKind kind = 8;
+}
+
+
+
+message SubmitRunRequest {
+  string run_id = 1;
+  // force to submit run even if some trials are still not done
+  bool force = 2;
+}
+
+message SubmitRunResponse {
+  string run_id = 1;
+  // will be submitted for blind benchmarks and evaluated for open
+  RunState state = 2;
+}
+
+
+// This request can be anonymous
+message StartPlaygroundRequest {
+  // e.g. bitgn/sandbox
+  string benchmark_id = 1;
+  // task id in this benchmark - e.g. t01
+  string task_id = 2;
+}
+
+// HarnessService is the primary entrypoint into the BitGN Benchmarks platform.
+// Most methods require authentication with BitGN platform API key
+service HarnessService {
+  rpc Status(StatusRequest) returns (StatusResponse);
+  // Fetch information about a given benchmark
+  rpc GetBenchmark(GetBenchmarkRequest) returns (GetBenchmarkResponse);
+
+  // Starting a leaderboard run will prepopulate trial parameters from the benchmark
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
+
+  // Start an isolated ad-hoc trial that is not attached to a leaderboard run.
+  rpc StartPlayground(StartPlaygroundRequest) returns (StartPlaygroundResponse);
+  // Start a prepared trial whose seed and metadata were fixed earlier by the platform (by starting a run).
+  rpc StartTrial(StartTrialRequest) returns (StartTrialResponse);
+  // Get current state of the trial
+  rpc GetTrial(GetTrialRequest) returns (GetTrialResponse);
+  // End trial. For Open benchmarks this will trigger evaluation
+  rpc EndTrial(EndTrialRequest) returns (EndTrialResponse);
+}
