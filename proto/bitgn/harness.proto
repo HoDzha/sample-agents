@@ -195,6 +195,7 @@ message LogLine {
 message StartRunRequest {
   string benchmark_id = 1;
   string name = 2;
+  string api_key = 3;
 }
 
 message StartRunResponse {
