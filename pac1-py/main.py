@@ -9,15 +9,14 @@ load_dotenv()
 from bitgn.harness_connect import HarnessServiceClientSync
 from bitgn.harness_pb2 import EndTrialRequest, SubmitRunRequest, EvalPolicy, StartTrialRequest, GetBenchmarkRequest, GetRunRequest, StatusRequest, StartRunRequest
 from connectrpc.errors import ConnectError
-from openai import OpenAI
-
 from agent import run_agent
 from logging_utils import configure_logging
+from openai_client import create_openai_client
 
 BITGN_URL = os.getenv("BITGN_HOST") or "https://api.bitgn.com"
 BITGN_API_KEY = os.getenv("BITGN_API_KEY") or ""
 BENCH_ID = os.getenv("BENCH_ID") or "bitgn/pac1-prod"
-MODEL_ID = os.getenv("MODEL_ID") or "gpt-4.1-2025-04-14"
+MODEL_ID = os.getenv("MODEL_ID") or "gpt-5"
 MAX_WORKERS = max(1, int(os.getenv("PAC1_MAX_WORKERS") or "4"))
 TASK_DELAY_SEC = max(0.0, float(os.getenv("PAC1_TASK_DELAY_SEC") or "5"))
 
@@ -59,23 +58,31 @@ def _run_trial(trial_id: str, task_id: str) -> tuple[str, float] | None:
 
 def _verify_model_call() -> None:
     logger, _ = configure_logging()
-    client = OpenAI(
-        base_url=os.getenv("OPENAI_BASE_URL"),
-        api_key=os.getenv("OPENAI_API_KEY") or "not-needed",
-    )
+    client = create_openai_client()
     logger.info("Checking model call for `%s`...", MODEL_ID)
-    resp = client.chat.completions.create(
-        model=MODEL_ID,
-        messages=[
-            {"role": "system", "content": "Reply with OK."},
-            {"role": "user", "content": "Ping"},
-        ],
-        max_completion_tokens=16,
+    kwargs = {
+        "model": MODEL_ID,
+        "input": "Reply with exactly OK.",
+        "max_output_tokens": 32,
+    }
+    lowered = MODEL_ID.lower()
+    if lowered.startswith("gpt-5") or lowered.startswith("o"):
+        kwargs["reasoning"] = {"effort": "minimal"}
+    resp = client.responses.create(
+        **kwargs,
     )
-    content = resp.choices[0].message.content or ""
+    content = (getattr(resp, "output_text", None) or "").strip()
+    if not content:
+        pieces = []
+        for item in getattr(resp, "output", []) or []:
+            for part in getattr(item, "content", []) or []:
+                text = getattr(part, "text", None)
+                if text:
+                    pieces.append(text)
+        content = "\n".join(pieces).strip()
     if not content.strip():
         raise RuntimeError(f"Model `{MODEL_ID}` returned an empty response during preflight.")
-    logger.info("Model preflight OK: %s", content.strip())
+    logger.info("Model preflight OK: %s", content)
 
 
 def main() -> None:

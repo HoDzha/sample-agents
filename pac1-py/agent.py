@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from connectrpc.errors import ConnectError
 from logging_utils import LOGGER
+from openai_client import create_openai_client
 
 
 
@@ -583,16 +584,28 @@ def _task_specific_guidance(task_text: str) -> str | None:
     return None
 
 
+def _response_call_kwargs(model: str) -> dict:
+    kwargs = {
+        "model": model,
+        "max_output_tokens": 1024,
+    }
+    lowered = model.lower()
+    if lowered.startswith("gpt-5") or lowered.startswith("o"):
+        kwargs["reasoning"] = {"effort": os.getenv("OPENAI_REASONING_EFFORT") or "medium"}
+    return kwargs
+
+
 def _request_next_step(client: OpenAI, model: str, log) -> NextStep:
     for attempt in range(5):
         try:
-            resp = client.beta.chat.completions.parse(
-                model=model,
-                response_format=NextStep,
-                messages=log,
-                max_completion_tokens=1024,
+            resp = client.responses.parse(
+                input=log,
+                text_format=NextStep,
+                **_response_call_kwargs(model),
             )
-            return resp.choices[0].message.parsed
+            if getattr(resp, "output_parsed", None) is None:
+                raise RuntimeError("Model returned no structured output.")
+            return resp.output_parsed
         except RateLimitError as exc:
             if attempt == 4:
                 raise
@@ -683,14 +696,9 @@ def _needs_repo_tree(task_text: str) -> bool:
 
 
 def run_agent(model: str, harness_url: str, task_text: str) -> None:
-    client = OpenAI(
-        base_url=os.getenv("OPENAI_BASE_URL"),
-        api_key=os.getenv("OPENAI_API_KEY") or "not-needed",
-    )
+    client = create_openai_client()
     vm = PcmRuntimeClientSync(harness_url)
-    log = [
-        {"role": "system", "content": system_prompt},
-    ]
+    log = []
     discovered_paths: set[str] = set()
     recent_commands: deque[str] = deque(maxlen=6)
     pending_verifications: set[str] = set()
@@ -720,7 +728,8 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
         dispatched = False
 
         started = time.time()
-        job = _request_next_step(client, model, log)
+        request_log = [{"role": "system", "content": system_prompt}, *log]
+        job = _request_next_step(client, model, request_log)
         elapsed_ms = int((time.time() - started) * 1000)
         guidance = _needs_discovery(job.function, discovered_paths)
         blocked_action = _guard_blocked_action(job.function, task_text)
@@ -737,17 +746,11 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
         log.append(
             {
                 "role": "assistant",
-                "content": job.plan_remaining_steps_brief[0],
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "id": step,
-                        "function": {
-                            "name": job.function.__class__.__name__,
-                            "arguments": job.function.model_dump_json(),
-                        },
-                    }
-                ],
+                "content": (
+                    f"{job.current_state}\n"
+                    f"Plan: {job.plan_remaining_steps_brief[0]}\n"
+                    f"Action: {job.function.model_dump_json()}"
+                ),
             }
         )
 
@@ -845,7 +848,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
 
         if isinstance(job.function, ReportTaskCompletion):
             if not dispatched:
-                log.append({"role": "tool", "content": txt, "tool_call_id": step})
+                log.append({"role": "user", "content": txt})
                 continue
             if (
                 security_threat_detected
@@ -853,13 +856,13 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
             ):
                 if security_threat_ref:
                     txt = f"{txt}\nGrounding hint: {security_threat_ref}"
-                log.append({"role": "tool", "content": txt, "tool_call_id": step})
+                log.append({"role": "user", "content": txt})
                 continue
             if (
                 job.function.outcome == "OUTCOME_OK"
                 and pending_verifications
             ):
-                log.append({"role": "tool", "content": txt, "tool_call_id": step})
+                log.append({"role": "user", "content": txt})
                 continue
             status = CLI_GREEN if job.function.outcome == "OUTCOME_OK" else CLI_YELLOW
             LOGGER.info(f"{status}agent {job.function.outcome}{CLI_CLR}. Summary:")
@@ -871,4 +874,4 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                     LOGGER.info(f"- {CLI_BLUE}{ref}{CLI_CLR}")
             break
 
-        log.append({"role": "tool", "content": txt, "tool_call_id": step})
+        log.append({"role": "user", "content": txt})
