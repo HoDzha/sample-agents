@@ -1,3 +1,6 @@
 .DS_Store
 .envrc
 .idea/
+.venv/
+.qwen/
+pac1-py/logs/

@@ -12,6 +12,7 @@ dependencies = [
     # AICODE-NOTE: Keep the protobuf runtime floor aligned with the generated Buf
     # SDK version; otherwise the sample imports fail before any agent logic runs.
     "protobuf>=7.34.1",
+    "python-dotenv>=1.0.0",
 ]
 
 [[tool.uv.index]]

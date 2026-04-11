@@ -9,7 +9,7 @@ You will need to provide your own `OPENAI_API_KEY` (or swap the OpenAI client fo
 Quick start:
 
 1. Export `OPENAI_API_KEY`
-2. Optionally export `BENCHMARK_HOST`, `BENCHMARK_ID`, or `MODEL_ID`
+2. Optionally export `BITGN_HOST`, `BENCH_ID`, `MODEL_ID`, `PAC1_LOG_FILE`, or `PAC1_MAX_WORKERS`
 3. Run `make sync`
 4. Run `make run`
 
@@ -21,6 +21,8 @@ uv run python main.py
 
 Useful environment overrides:
 
-- `BENCHMARK_HOST` defaults to `https://api.bitgn.com`
-- `BENCHMARK_ID` defaults to `bitgn/pac1-dev`
+- `BITGN_HOST` defaults to `https://api.bitgn.com`
+- `BENCH_ID` defaults to `bitgn/pac1-dev`
 - `MODEL_ID` defaults to `gpt-4.1-2025-04-14`
+- `PAC1_LOG_FILE` defaults to `logs/pac1-YYYYMMDD-HHMMSS.log`
+- `PAC1_MAX_WORKERS` defaults to `4`

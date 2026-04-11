@@ -1,5 +1,8 @@
 import os
 import textwrap
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from bitgn.harness_connect import HarnessServiceClientSync
 from bitgn.harness_pb2 import StatusRequest, GetBenchmarkRequest, StartPlaygroundRequest, EvalPolicy, EndTrialRequest

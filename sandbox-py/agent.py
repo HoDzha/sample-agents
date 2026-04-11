@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from typing import Annotated, List, Literal, Union
 
@@ -120,7 +121,10 @@ def dispatch(r: MiniRuntimeClientSync, cmd: BaseModel):
 
 
 def run_agent(model: str, harness_url: str, task_text: str):
-    client = OpenAI()
+    client = OpenAI(
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY") or "not-needed",
+    )
     vm = MiniRuntimeClientSync(harness_url)
 
     # log will contain conversation context for the agent within task
@@ -140,7 +144,7 @@ def run_agent(model: str, harness_url: str, task_text: str):
             model=model,
             response_format=NextStep,
             messages=log,
-            max_completion_tokens=16384,
+            max_completion_tokens=4096,
         )
 
         job = resp.choices[0].message.parsed
