@@ -9,6 +9,7 @@ load_dotenv()
 from bitgn.harness_connect import HarnessServiceClientSync
 from bitgn.harness_pb2 import EndTrialRequest, SubmitRunRequest, EvalPolicy, StartTrialRequest, GetBenchmarkRequest, GetRunRequest, StatusRequest, StartRunRequest
 from connectrpc.errors import ConnectError
+from openai import APIConnectionError
 from agent import run_agent
 from logging_utils import configure_logging
 from openai_client import create_openai_client
@@ -68,9 +69,25 @@ def _verify_model_call() -> None:
     lowered = MODEL_ID.lower()
     if lowered.startswith("gpt-5") or lowered.startswith("o"):
         kwargs["reasoning"] = {"effort": "minimal"}
-    resp = client.responses.create(
-        **kwargs,
-    )
+    last_error: Exception | None = None
+    for attempt in range(5):
+        try:
+            resp = client.responses.create(**kwargs)
+            break
+        except APIConnectionError as exc:
+            last_error = exc
+            if attempt == 4:
+                raise
+            wait_seconds = 2 + attempt * 2
+            logger.warning(
+                "Model preflight connection failed (%s/5): %s. Retrying in %ss...",
+                attempt + 1,
+                exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+    else:
+        raise last_error or RuntimeError("Model preflight failed.")
     content = (getattr(resp, "output_text", None) or "").strip()
     if not content:
         pieces = []
