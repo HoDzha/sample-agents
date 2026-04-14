@@ -810,14 +810,6 @@ def _is_generic_inbox_triage_task(task_text: str) -> bool:
         "ж¬ЎгЃ®еЏ—дїЎгѓ€гѓ¬г‚¤й …з›®г‚’е‡¦зђ†гЃ—гЃ¦гЃЏгЃ гЃ•гЃ„",
     }:
         return True
-    if len(normalized) <= 80 and (
-        "收件箱" in normalized
-        or "дїЎгѓ€гѓ¬г‚¤" in normalized
-        or "posteingang" in normalized
-        or "bandeja de entrada" in normalized
-        or "boite de reception" in normalized
-    ):
-        return True
     return normalized in {
         "take care of the next message in inbox.",
         "take care of the next message in inbox",
@@ -975,8 +967,6 @@ def _extract_birth_date_query(task_text: str) -> tuple[str, str] | None:
         (r"^what is (.+?)'s birthday\?\s*answer yyyy-mm-dd\.?\s*date only$", "yyyy-mm-dd"),
         (r"^what is the birthday of (.+?)\?\s*answer yyyy-mm-dd\.?\s*date only$", "yyyy-mm-dd"),
         (r"^when was (.+?) born\?\s*return only dd-mm-yyyy\.?$", "dd-mm-yyyy"),
-        (r"^need the (.+?)'s birthday\.\s*reply with the date in mm/dd/yyyy format only\.?$", "mm/dd/yyyy"),
-        (r"^need the birthday for (.+?)\.\s*reply with the date in mm/dd/yyyy format only\.?$", "mm/dd/yyyy"),
         (r"^give me the birthday for (.+?)\.\s*format:\s*month dd, yyyy\s*date only\.?$", "month dd, yyyy"),
         (r"^give me the birthday for (.+?)\.\s*return only month dd, yyyy\.?$", "month dd, yyyy"),
     ]
@@ -1193,22 +1183,6 @@ def _extract_purchase_bill_line_count_query(task_text: str) -> tuple[str, str, s
     return " ".join(match.group(1).split()).strip(), start_date, end_date
 
 
-def _extract_purchase_bill_date_query(task_text: str) -> tuple[str, str, str, str] | None:
-    normalized = " ".join(task_text.strip().split())
-    match = re.match(
-        r"^what is the purchased date in dd-mm-yyyy format \(return only date\) of bill from (.+?) issued around (.+)$",
-        normalized,
-        re.IGNORECASE,
-    )
-    if not match:
-        return None
-    window = _parse_month_day_date_window(match.group(2))
-    if not window:
-        return None
-    start_date, end_date = window
-    return " ".join(match.group(1).split()).strip(), start_date, end_date, "dd-mm-yyyy"
-
-
 def _extract_purchase_vendor_total_by_line_signature_query(task_text: str) -> tuple[int | None, str, int] | None:
     normalized = " ".join(task_text.strip().split())
     patterns = [
@@ -1332,8 +1306,6 @@ def _extract_inbox_pay_bill_request(content: str) -> tuple[str, str, int] | None
         r"search for that old (.+?) bill issued on ([0-9]{4}-[0-9]{2}-[0-9]{2}) for eur ([0-9]+), then confirm with the bank it is paid\.?$",
         r"look at the payment i need to make for (.+?) from ([0-9]{4}-[0-9]{2}-[0-9]{2})\. once found transfer required eur ([0-9]+) and confirm when done\.?$",
         r"find (?:the )?bill from (.+?) (?:issued|dated) on ([0-9]{4}-[0-9]{2}-[0-9]{2}) for eur ([0-9]+).*(?:bank transfer|confirm with the bank|confirm when done|confirm it is paid).*$",
-        r"locate (?:the )?(?:the )?(.+?) bill from ([0-9]{4}-[0-9]{2}-[0-9]{2}) in the amount of eur ([0-9]+).*(?:bank transfer).*(?:completed|done|paid).*$",
-        r"locate (?:the )?(?:the )?(.+?) bill from ([0-9]{4}-[0-9]{2}-[0-9]{2}).*eur ([0-9]+).*(?:bank transfer).*(?:completed|done|paid).*$",
     ]
     for pattern in patterns:
         match = re.search(pattern, normalized, re.IGNORECASE)
@@ -1759,14 +1731,9 @@ def _score_entity_descriptor_match(query: str, title: str, alias: str, content: 
             if re.search(rf"\b{re.escape(alias)}\b", normalized_query) and expanded in relationship:
                 score += 25
         if "design partner" in normalized_query and "startup partner" in relationship:
-            score += 8
+            score += 25
         if "startup partner" in normalized_query and "startup partner" in relationship:
             score += 25
-        if (
-            any(phrase in normalized_query for phrase in ("house ai", "home ai", "household ai"))
-            and ("assistant prototype" in relationship or "assistant" in relationship)
-        ):
-            score += 60
         if "founder" in query_tokens and "product" in query_tokens and "startup" in relationship_tokens and "partner" in relationship_tokens:
             score += 30
         if "founder" in query_tokens and "product" in lowered_content and "startup" in relationship_tokens and "partner" in relationship_tokens:
@@ -1777,23 +1744,6 @@ def _score_entity_descriptor_match(query: str, title: str, alias: str, content: 
             score += 8
         if ("home" in query_tokens or "house" in query_tokens) and ("home" in relationship_tokens or "house" in relationship_tokens):
             score += 8
-    if "design partner" in normalized_query:
-        if "design" in lowered_content:
-            score += 45
-        if "maker" in lowered_content or "maker_friend" in lowered_content:
-            score += 18
-    if any(phrase in normalized_query for phrase in ("house ai", "home ai", "household ai")):
-        if "assistant prototype" in lowered_content or "ambient assistant" in lowered_content or title.lower() == "nora" or alias.lower() == "nora":
-            score += 60
-        if "home server" in lowered_content or "lab server" in lowered_content:
-            score -= 12
-    if "health" in query_tokens:
-        if "health friend" in lowered_content or "health_friend" in lowered_content:
-            score += 50
-        if "health" not in lowered_content:
-            score -= 8
-    if "honest" in query_tokens and ("health and sanity" in lowered_content or "accountability" in lowered_content):
-        score += 16
     return score
 
 
@@ -1802,14 +1752,6 @@ def _resolve_family_descriptor(
     entity_records: list[tuple[str, str, str, str]],
 ) -> tuple[str | None, str | None, str | None]:
     normalized_target = " ".join(target_name.lower().split())
-    if normalized_target in {"my partner", "our partner", "my wife", "my husband", "my spouse"}:
-        for alias, title, entity_path, content in entity_records:
-            relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
-            if not relationship_match:
-                continue
-            relationship = relationship_match.group(1).replace("_", " ").lower()
-            if relationship in {"wife", "husband", "spouse", "partner"}:
-                return alias, title, entity_path
     if normalized_target in {"our older one", "our younger one"}:
         family_children: list[tuple[date, str, str, str]] = []
         for alias, title, entity_path, content in entity_records:
@@ -1826,7 +1768,7 @@ def _resolve_family_descriptor(
             _, alias, title, entity_path = family_children[0] if normalized_target == "our older one" else family_children[-1]
             return alias, title, entity_path
 
-    relation_match = re.match(r"^(.+?)'s\s+(mom|mother|dad|father|boss|manager|lead)$", normalized_target)
+    relation_match = re.match(r"^(.+?)'s\s+(mom|mother|dad|father)$", normalized_target)
     if not relation_match:
         return None, None, None
 
@@ -1842,36 +1784,6 @@ def _resolve_family_descriptor(
             owner_alias = alias
             relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
             owner_relationship = relationship_match.group(1).replace("_", " ").lower() if relationship_match else None
-
-    if relation_word in {"boss", "manager", "lead"}:
-        owner_markers = {token for token in re.findall(r"[a-z0-9]+", owner_descriptor.lower()) if token}
-        if owner_alias:
-            owner_markers.add(owner_alias.lower())
-        best_match: tuple[int, str, str, str] | None = None
-        leadership_tokens = {"lead", "manager", "ceo", "head", "boss"}
-        for alias, title, entity_path, content in entity_records:
-            relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
-            if not relationship_match:
-                continue
-            relationship = relationship_match.group(1).replace("_", " ").lower()
-            relationship_tokens = set(re.findall(r"[a-z0-9]+", relationship))
-            score = 0
-            if leadership_tokens.intersection(relationship_tokens):
-                score += 20
-            lowered_content = content.lower()
-            if owner_markers and any(marker in lowered_content for marker in owner_markers):
-                score += 35
-            if owner_relationship in {"wife", "husband", "spouse", "partner"} and "bureau" in relationship_tokens:
-                score += 8
-            if relation_word == "manager" and "manager" in relationship_tokens:
-                score += 10
-            if relation_word == "lead" and "lead" in relationship_tokens:
-                score += 10
-            if best_match is None or score > best_match[0]:
-                best_match = (score, alias, title, entity_path)
-        if best_match and best_match[0] > 0:
-            _, alias, title, entity_path = best_match
-            return alias, title, entity_path
 
     desired_relationships = {relation_word, "mother" if relation_word == "mom" else "father"}
     if owner_relationship in {"wife", "husband", "spouse", "partner"}:
@@ -1890,79 +1802,6 @@ def _resolve_family_descriptor(
     return None, None, None
 
 
-def _resolve_child_life_stage_descriptor(
-    target_name: str,
-    entity_records: list[tuple[str, str, str, str]],
-    current_date: date,
-) -> tuple[str | None, str | None, str | None]:
-    normalized_target = " ".join(target_name.lower().split())
-    stage: str | None = None
-    if any(token in normalized_target for token in ("kindergarten", "preschool")):
-        stage = "kindergarten"
-    elif any(token in normalized_target for token in ("teen", "teenager")):
-        stage = "teen"
-    elif "school" in normalized_target:
-        stage = "school"
-
-    if stage is None or not any(token in normalized_target for token in ("kid", "child", "one", "teen", "teenager")):
-        return None, None, None
-
-    best_match: tuple[int, str, str, str] | None = None
-    for alias, title, entity_path, content in entity_records:
-        kind_match = re.search(r"^- kind:\s*`?([a-z_]+)`?\s*$", content, re.MULTILINE)
-        relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
-        birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", content, re.MULTILINE)
-        if not kind_match or not relationship_match or not birthday_match:
-            continue
-        if kind_match.group(1).strip().lower() != "person":
-            continue
-        relationship = relationship_match.group(1).replace("_", " ").lower()
-        if relationship not in {"daughter", "son", "child"}:
-            continue
-
-        birthday_value = datetime.strptime(birthday_match.group(1), "%Y-%m-%d").date()
-        age = current_date.year - birthday_value.year - (
-            (current_date.month, current_date.day) < (birthday_value.month, birthday_value.day)
-        )
-        lowered_content = content.lower()
-        score = 0
-
-        if stage == "kindergarten":
-            if "kindergarten" in lowered_content or "preschool" in lowered_content:
-                score += 90
-            if 4 <= age <= 6:
-                score += 80 - abs(age - 5) * 10
-            elif 3 <= age <= 7:
-                score += 35 - abs(age - 5) * 10
-        elif stage == "school":
-            if "school" in lowered_content or "student" in lowered_content:
-                score += 70
-            if 6 <= age <= 12:
-                score += 60 - abs(age - 9) * 6
-            elif 5 <= age <= 13:
-                score += 24 - abs(age - 9) * 6
-        elif stage == "teen":
-            if "teen" in lowered_content or "teenager" in lowered_content:
-                score += 70
-            if 13 <= age <= 19:
-                score += 60 - abs(age - 16) * 5
-            elif 12 <= age <= 20:
-                score += 24 - abs(age - 16) * 5
-
-        if "kid" in normalized_target or "child" in normalized_target:
-            score += 5
-
-        if score <= 0:
-            continue
-        if best_match is None or score > best_match[0]:
-            best_match = (score, alias, title, entity_path)
-
-    if best_match:
-        _, alias, title, entity_path = best_match
-        return alias, title, entity_path
-    return None, None, None
-
-
 def _score_project_descriptor_match(query: str, title: str, dirname: str, content: str) -> int:
     lowered_query = query.lower()
     lowered_title = title.lower()
@@ -1971,7 +1810,7 @@ def _score_project_descriptor_match(query: str, title: str, dirname: str, conten
     score = 0
     if _names_match_loose(query, title) or _names_match_loose(query, dirname.replace("_", " ")):
         score += 100
-    stopwords = {"the", "project", "start", "date", "when", "did", "give", "format", "month", "only", "answer", "reply", "return", "me", "for", "not"}
+    stopwords = {"the", "project", "start", "date", "when", "did"}
     query_tokens = [
         token
         for token in re.findall(r"[a-z0-9]+", lowered_query)
@@ -1996,14 +1835,6 @@ def _score_project_descriptor_match(query: str, title: str, dirname: str, conten
         score += 8
     if ("sci" in query_tokens or "fi" in query_tokens or "scifi" in query_tokens) and "black library" in lowered_title:
         score += 8
-    if any(token in query_tokens for token in ("40k", "grimdark", "warhammer")) and "black library" in lowered_title:
-        score += 30
-    if "40k" in query_tokens and "reading" in lowered_title:
-        score -= 12
-    if "grimdark" in query_tokens and "reading" in lowered_title:
-        score -= 12
-    if "hobby" in query_tokens and "lane" in query_tokens and "black library" in lowered_title:
-        score += 10
     if "workflow" in query_tokens and "product" in query_tokens:
         if any(token in lowered_content for token in ("product", "buyer", "startup", "partner")):
             score += 18
@@ -2031,17 +1862,6 @@ def _score_project_descriptor_match(query: str, title: str, dirname: str, conten
         score += 16
     if "cleanup" in query_tokens and ("school helper kit" in lowered_title or "repair ledger" in lowered_title):
         score -= 10
-    if (
-        "do-not-degrade" in lowered_query
-        or "degrade lane" in lowered_query
-        or ("degrade" in query_tokens and "lane" in query_tokens)
-    ):
-        if "harbor body" in lowered_title:
-            score += 55
-        if any(token in lowered_content for token in ("stay functional", "functional enough", "quietly collapsing", "collapsing underneath")):
-            score += 35
-        if "window farm" in lowered_title or "reading spine" in lowered_title:
-            score -= 12
     if "automation" in lowered_query and (
         "kind: `house_system`" in lowered_content
         or "home_systems" in lowered_content
@@ -3180,17 +3000,6 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
             family_birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", family_content, re.MULTILINE)
             matched_birthday = family_birthday_match.group(1) if family_birthday_match else None
 
-        if any(token in person_name.lower() for token in ("kindergarten", "preschool", "school", "teen")):
-            context_result = run_cmd(Req_Context(tool="context"))
-            current_date = datetime.fromisoformat(getattr(context_result, "time", "").replace("Z", "+00:00")).date()
-            stage_alias, stage_title, stage_path = _resolve_child_life_stage_descriptor(person_name, entity_records, current_date)
-            if stage_path:
-                matched_path = stage_path
-                matched_title = stage_title
-                stage_content = next(content for alias, title, path, content in entity_records if path == stage_path)
-                stage_birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", stage_content, re.MULTILINE)
-                matched_birthday = stage_birthday_match.group(1) if stage_birthday_match else None
-
         if matched_path and matched_birthday:
             answer = _format_date_output(matched_birthday, output_fmt)
             completion = ReportTaskCompletion(
@@ -3595,47 +3404,6 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                 ],
                 message=str(len(parsed.get("lines", []))),
                 grounding_refs=[bill_path],
-                outcome="OUTCOME_OK",
-            )
-            finish(completion)
-            return
-
-    purchase_bill_date_query = _extract_purchase_bill_date_query(task_text)
-    if purchase_bill_date_query:
-        vendor_name, start_date, end_date, output_fmt = purchase_bill_date_query
-        purchases_result = run_cmd(Req_List(tool="list", path="/50_finance/purchases"))
-        vendor_lower = " ".join(vendor_name.lower().split())
-        matches: list[tuple[str, str]] = []
-        for entry in getattr(purchases_result, "entries", []):
-            entry_name = str(getattr(entry, "name", ""))
-            if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
-                continue
-            bill_path = _normalize_path(f"/50_finance/purchases/{entry_name}")
-            bill_result = run_cmd(Req_Read(tool="read", path=bill_path))
-            bill_content = str(getattr(bill_result, "content", ""))
-            parsed = _extract_finance_record_data(bill_content)
-            if not parsed or parsed.get("record_type") != "bill":
-                continue
-            purchased_on = str(parsed.get("purchased_on", ""))
-            counterparty = " ".join(str(parsed.get("counterparty", "")).lower().split())
-            if not purchased_on or not (start_date <= purchased_on <= end_date):
-                continue
-            if counterparty != vendor_lower:
-                continue
-            matches.append((purchased_on, bill_path))
-        matches.sort(key=lambda item: item[0])
-        if matches:
-            chosen_date, chosen_path = matches[0]
-            completion = ReportTaskCompletion(
-                tool="report_completion",
-                completed_steps_laconic=[
-                    "Listed /50_finance/purchases",
-                    f"Matched the bill from {vendor_name} inside the requested date window",
-                    "Read the bill record and extracted purchased_on",
-                    "Returned the purchase date in the requested format",
-                ],
-                message=_format_date_output(chosen_date, output_fmt),
-                grounding_refs=[chosen_path],
                 outcome="OUTCOME_OK",
             )
             finish(completion)
@@ -4501,7 +4269,6 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                 if oldest_invoice_bundle:
                     requested_count, requested_entity = oldest_invoice_bundle
                     cast_result = run_cmd(Req_List(tool="list", path="/10_entities/cast"))
-                    cast_records: list[tuple[str, str, str]] = []
                     entity_path: str | None = None
                     entity_title: str | None = None
                     entity_alias: str | None = None
@@ -4517,7 +4284,6 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                         title_match = re.search(r"^#\s+(.+)$", candidate_content, re.MULTILINE)
                         title = title_match.group(1).strip() if title_match else PurePosixPath(candidate_path).stem
                         alias = PurePosixPath(candidate_path).stem
-                        cast_records.append((alias, title, candidate_path))
                         score = _score_entity_descriptor_match(requested_entity, title, alias, candidate_content)
                         if score > best_entity_score:
                             best_entity_score = score
@@ -4529,34 +4295,6 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                                 entity_email = email_match.group(1).strip()
                             else:
                                 entity_email = None
-                    if "design partner" in requested_entity.lower():
-                        invoices_result = run_cmd(Req_List(tool="list", path="/50_finance/invoices"))
-                        inferred_entity_counts: dict[str, int] = {}
-                        for entry in getattr(invoices_result, "entries", []):
-                            entry_name = str(getattr(entry, "name", ""))
-                            if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
-                                continue
-                            invoice_path = _normalize_path(f"/50_finance/invoices/{entry_name}")
-                            invoice_result = run_cmd(Req_Read(tool="read", path=invoice_path))
-                            invoice_content = str(getattr(invoice_result, "content", ""))
-                            lowered_invoice = invoice_content.lower()
-                            if "design-partner" not in lowered_invoice and "design partner" not in lowered_invoice:
-                                continue
-                            related_match = re.search(r"^\|\s*related_entity\s*\|\s*(.+?)\s*\|$", invoice_content, re.MULTILINE | re.IGNORECASE)
-                            if not related_match:
-                                continue
-                            related_title = " ".join(related_match.group(1).split()).strip()
-                            inferred_entity_counts[related_title] = inferred_entity_counts.get(related_title, 0) + 1
-                        if inferred_entity_counts:
-                            inferred_title = max(inferred_entity_counts.items(), key=lambda item: item[1])[0]
-                            for alias, title, candidate_path in cast_records:
-                                if not _names_match_loose(inferred_title, title):
-                                    continue
-                                entity_path = candidate_path
-                                entity_title = title
-                                entity_alias = alias
-                                best_entity_score = max(best_entity_score, 100)
-                                break
                     if entity_path and entity_title and entity_alias and best_entity_score >= 6:
                         invoices_result = run_cmd(Req_List(tool="list", path="/50_finance/invoices"))
                         matched_invoices: list[tuple[str, str, str]] = []
