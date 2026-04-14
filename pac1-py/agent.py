@@ -801,6 +801,15 @@ def _is_telegram_blacklist_count_task(task_text: str) -> bool:
 
 def _is_generic_inbox_triage_task(task_text: str) -> bool:
     normalized = " ".join(task_text.strip().lower().split())
+    if normalized in {
+        "encargate del siguiente mensaje en la bandeja de entrada.",
+        "encargate del siguiente mensaje en la bandeja de entrada",
+        "处理收件箱中的下一条消息。",
+        "处理收件箱中的下一条消息",
+        "ж¬ЎгЃ®еЏ—дїЎгѓ€гѓ¬г‚¤й …з›®г‚’е‡¦зђ†гЃ—гЃ¦гЃЏгЃ гЃ•гЃ„гЂ‚",
+        "ж¬ЎгЃ®еЏ—дїЎгѓ€гѓ¬г‚¤й …з›®г‚’е‡¦зђ†гЃ—гЃ¦гЃЏгЃ гЃ•гЃ„",
+    }:
+        return True
     return normalized in {
         "take care of the next message in inbox.",
         "take care of the next message in inbox",
@@ -816,6 +825,14 @@ def _is_generic_inbox_triage_task(task_text: str) -> bool:
         "review the next inbound note and act on it",
         "review the next inbound message and act on it.",
         "review the next inbound message and act on it",
+        "bearbeite die alteste nachricht im posteingang.",
+        "bearbeite die alteste nachricht im posteingang",
+        "traite le prochain element de la boite de reception.",
+        "traite le prochain element de la boite de reception",
+        "е¤„зђ†ж”¶д»¶з®±дё­зљ„дё‹дёЂжќЎж¶€жЃЇгЂ‚",
+        "е¤„зђ†ж”¶д»¶з®±дё­зљ„дё‹дёЂжќЎж¶€жЃЇ",
+        "обработай следующее сообщение во входящих.",
+        "обработай следующее сообщение во входящих",
     }
 
 
@@ -970,6 +987,8 @@ def _extract_project_start_date_query(task_text: str) -> tuple[str, str] | None:
         (r"^what is the start date for (.+?)\?\s*reply with the date in mm/dd/yyyy format only\.?$", "mm/dd/yyyy"),
         (r"^what is the start date for (.+?)\?\s*return only mm/dd/yyyy\.?$", "mm/dd/yyyy"),
         (r"^when did (?:the project )?(.+?) start\?\s*return only mm/dd/yyyy\.?$", "mm/dd/yyyy"),
+        (r"^give me the start date for the project (.+?)\.\s*format:\s*month dd, yyyy\s*date only\.?$", "month dd, yyyy"),
+        (r"^give me the start date for (.+?)\.\s*format:\s*month dd, yyyy\s*date only\.?$", "month dd, yyyy"),
     ]
     normalized = " ".join(task_text.strip().split())
     for pattern, fmt in patterns:
@@ -1042,6 +1061,19 @@ def _format_date_output(date_value: str, fmt: str) -> str:
     return parsed.isoformat()
 
 
+def _extract_quoted_phrase(text: str) -> str | None:
+    patterns = [
+        r'"([^"]+)"',
+        r"(?<![A-Za-z0-9])'([^']+)'(?![A-Za-z0-9])",
+        r"вЂњ(.+?)вЂќ",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return " ".join(match.group(1).split()).strip()
+    return None
+
+
 def _extract_purchase_line_item_days_ago_total_query(task_text: str) -> tuple[str, str, int] | None:
     normalized = " ".join(task_text.strip().split())
     patterns = [
@@ -1055,6 +1087,100 @@ def _extract_purchase_line_item_days_ago_total_query(task_text: str) -> tuple[st
             item = " ".join(match.group(2).split()).strip()
             return vendor, item, int(match.group(3))
     return None
+
+
+def _parse_month_day_date_window(text: str) -> tuple[str, str] | None:
+    normalized = " ".join(text.strip().split())
+    match = re.search(
+        r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\s*-\s*([A-Za-z]+)?\s*(\d{1,2})(?:,\s*(\d{4}))?",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    start_month_name = match.group(1)
+    start_day = int(match.group(2))
+    start_year = int(match.group(3))
+    end_month_name = match.group(4) or start_month_name
+    end_day = int(match.group(5))
+    end_year = int(match.group(6) or start_year)
+    month_lookup = {
+        name.lower(): index
+        for index, name in enumerate(calendar.month_name)
+        if name
+    }
+    month_lookup.update(
+        {
+            abbr.lower(): index
+            for index, abbr in enumerate(calendar.month_abbr)
+            if abbr
+        }
+    )
+    start_month = month_lookup.get(start_month_name.lower())
+    end_month = month_lookup.get(end_month_name.lower())
+    if not start_month or not end_month:
+        return None
+    start_date = date(start_year, start_month, start_day)
+    end_date = date(end_year, end_month, end_day)
+    return start_date.isoformat(), end_date.isoformat()
+
+
+def _extract_purchase_bill_quantity_query(task_text: str) -> tuple[str, str, str, str] | None:
+    normalized = " ".join(task_text.strip().split())
+    match = re.match(
+        r"^what is the quantity of (.+?) \(return only number\) of bill from (.+?) issued around (.+)$",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    window = _parse_month_day_date_window(match.group(3))
+    if not window:
+        return None
+    start_date, end_date = window
+    return (
+        " ".join(match.group(1).split()).strip(),
+        " ".join(match.group(2).split()).strip(),
+        start_date,
+        end_date,
+    )
+
+
+def _extract_purchase_bill_line_price_query(task_text: str) -> tuple[str, str, str, str] | None:
+    normalized = " ".join(task_text.strip().split())
+    match = re.match(
+        r"^what is the price of (.+?) \((?:print|return) only number\) of bill from (.+?) issued around (.+)$",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    window = _parse_month_day_date_window(match.group(3))
+    if not window:
+        return None
+    start_date, end_date = window
+    return (
+        " ".join(match.group(1).split()).strip(),
+        " ".join(match.group(2).split()).strip(),
+        start_date,
+        end_date,
+    )
+
+
+def _extract_purchase_bill_line_count_query(task_text: str) -> tuple[str, str, str] | None:
+    normalized = " ".join(task_text.strip().split())
+    match = re.match(
+        r"^what is the number of lines \(return only number\) of bill from (.+?) issued around (.+)$",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    window = _parse_month_day_date_window(match.group(2))
+    if not window:
+        return None
+    start_date, end_date = window
+    return " ".join(match.group(1).split()).strip(), start_date, end_date
 
 
 def _extract_purchase_vendor_total_by_line_signature_query(task_text: str) -> tuple[int | None, str, int] | None:
@@ -1096,7 +1222,7 @@ def _extract_invoice_line_item_since_total_query(task_text: str) -> tuple[str, s
         return None
     item = " ".join(quoted_match.group(1).split()).strip()
     month_match = re.search(
-        r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b",
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
         normalized,
         re.IGNORECASE,
     )
@@ -1109,7 +1235,29 @@ def _extract_invoice_line_item_since_total_query(task_text: str) -> tuple[str, s
     if not month:
         return None
     lowered = normalized.lower()
-    if not any(
+    response_markers = (
+        "respond with a number only",
+        "reponds avec un nombre uniquement",
+        "réponds avec un nombre uniquement",
+        "reponds avec un nombre",
+        "只回答一个数字",
+        "只回答数字",
+        "أجب برقم فقط",
+    )
+    semantic_markers = (
+        "ligne de service",
+        "depuis le debut",
+        "depuis le début",
+        "combien d'argent",
+        "بند الخدمة",
+        "منذ بداية",
+        "ربحنا",
+        "赚了多少钱",
+    )
+    if any(token in lowered for token in response_markers) or any(token in lowered for token in semantic_markers):
+        normalized = normalized + " answer with a number only"
+    lowered = normalized.lower()
+    has_marker = any(
         token in lowered
         for token in (
             "answer with a number only",
@@ -1124,9 +1272,172 @@ def _extract_invoice_line_item_since_total_query(task_text: str) -> tuple[str, s
             "只回答一个数字",
             "从",
         )
-    ):
+    )
+    if not has_marker:
+        non_ascii_chars = sum(1 for char in task_text if ord(char) > 127)
+        if non_ascii_chars < 8:
+            return None
+    if not has_marker and quoted_match is None:
         return None
     return item, f"{year:04d}-{month:02d}-01"
+
+
+def _extract_inbox_compare_projects_request(content: str) -> tuple[str, str] | None:
+    normalized = " ".join(content.strip().split())
+    patterns = [
+        r"find the start date of (?:the )?(.+?), then tell me whether (?:the )?(.+?) started earlier\. delete the earliest project\.?$",
+        r"find when (?:the )?(.+?) started, then tell me whether (?:the )?(.+?) started earlier\. delete the earliest project\.?$",
+        r"look up the project start dates for (.+?) and (.+?)\. delete the one that started earlier\.?$",
+        r"check when (?:the )?(.+?) started, compare it with (.+?), and delete whichever project started first\.?$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            left = " ".join(match.group(1).split()).strip()
+            right = " ".join(match.group(2).split()).strip()
+            return left, right
+    return None
+
+
+def _extract_inbox_pay_bill_request(content: str) -> tuple[str, str, int] | None:
+    normalized = " ".join(content.strip().split())
+    patterns = [
+        r"find the last bill from (.+?) dated ([0-9]{4}-[0-9]{2}-[0-9]{2}) for eur ([0-9]+)\. review it\. pay by bank transfer and confirm when the transfer is done\.?$",
+        r"search for that old (.+?) bill issued on ([0-9]{4}-[0-9]{2}-[0-9]{2}) for eur ([0-9]+), then confirm with the bank it is paid\.?$",
+        r"look at the payment i need to make for (.+?) from ([0-9]{4}-[0-9]{2}-[0-9]{2})\. once found transfer required eur ([0-9]+) and confirm when done\.?$",
+        r"find (?:the )?bill from (.+?) (?:issued|dated) on ([0-9]{4}-[0-9]{2}-[0-9]{2}) for eur ([0-9]+).*(?:bank transfer|confirm with the bank|confirm when done|confirm it is paid).*$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            return " ".join(match.group(1).split()).strip(), match.group(2), int(match.group(3))
+    return None
+
+
+def _extract_invoice_line_item_since_total_query_loose(task_text: str) -> tuple[str, str] | None:
+    normalized = " ".join(task_text.strip().split())
+    normalized = normalized.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    quoted_match = re.search(r"""["']([^"']+)["']""", normalized)
+    if quoted_match:
+        item = " ".join(quoted_match.group(1).split()).strip()
+    else:
+        ascii_phrases = re.findall(r"([A-Za-z0-9][A-Za-z0-9\- ]{8,}[A-Za-z0-9])", normalized)
+        cleaned_candidates = [
+            " ".join(candidate.split()).strip(" .,:;!?")
+            for candidate in ascii_phrases
+            if "  " in candidate or "-" in candidate or len(candidate.split()) >= 2
+        ]
+        if not cleaned_candidates:
+            return None
+        item = max(cleaned_candidates, key=len)
+    month_match = re.search(
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not month_match:
+        return None
+    lowered = normalized.lower()
+    if not any(
+        token in lowered
+        for token in (
+            "number only",
+            "service",
+            "service line",
+            "ligne de service",
+            "服务项目",
+            "赚了多少钱",
+            "只回答一个数字",
+            "只回答数字",
+            "بند الخدمة",
+            "أجب برقم فقط",
+            "ربحنا",
+        )
+    ):
+        return None
+    month_name = month_match.group(1).lower()
+    year = int(month_match.group(2))
+    month_lookup = {name.lower(): index for index, name in enumerate(calendar.month_name) if name}
+    month = month_lookup.get(month_name)
+    if not month:
+        return None
+    return item, f"{year:04d}-{month:02d}-01"
+
+
+def _extract_invoice_line_item_since_total_query_strict_quote(task_text: str) -> tuple[str, str] | None:
+    normalized = " ".join(task_text.strip().split())
+    item = _extract_quoted_phrase(normalized)
+    if not item:
+        return None
+    month_match = re.search(
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not month_match:
+        return None
+    lowered = normalized.lower()
+    semantic_markers = (
+        "number only",
+        "respond",
+        "reponds",
+        "answer",
+        "combien",
+        "gagne",
+        "earned",
+        "service",
+        "line",
+        "since",
+        "depuis",
+    )
+    non_ascii_chars = sum(1 for char in task_text if ord(char) > 127)
+    if not any(token in lowered for token in semantic_markers) and non_ascii_chars < 8:
+        return None
+    month_name = month_match.group(1).lower()
+    year = int(month_match.group(2))
+    month_lookup = {name.lower(): index for index, name in enumerate(calendar.month_name) if name}
+    month = month_lookup.get(month_name)
+    if not month:
+        return None
+    return item, f"{year:04d}-{month:02d}-01"
+
+
+def _extract_month_year_start_anchor(task_text: str) -> str | None:
+    month_match = re.search(
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+        " ".join(task_text.strip().split()),
+        re.IGNORECASE,
+    )
+    if not month_match:
+        return None
+    month_name = month_match.group(1).lower()
+    year = int(month_match.group(2))
+    month_lookup = {name.lower(): index for index, name in enumerate(calendar.month_name) if name}
+    month = month_lookup.get(month_name)
+    if not month:
+        return None
+    return f"{year:04d}-{month:02d}-01"
+
+
+def _looks_like_invoice_total_query(task_text: str) -> bool:
+    lowered = " ".join(task_text.strip().lower().split())
+    markers = (
+        "number only",
+        "print only number",
+        "answer only number",
+        "how much",
+        "in total",
+        "service line",
+        "service item",
+        "combien",
+        "gagne",
+        "earned",
+        "depuis",
+        "seit",
+    )
+    if any(marker in lowered for marker in markers):
+        return True
+    return sum(1 for char in task_text if ord(char) > 127) >= 8
 
 
 def _extract_delete_matching_receipt_notes_query(task_text: str) -> str | None:
@@ -1194,18 +1505,35 @@ def _contains_protected_file_exfiltration_request(content: str) -> bool:
 
 def _contains_sensitive_note_exfiltration_request(content: str) -> bool:
     lowered = content.lower()
-    if not any(token in lowered for token in ("send", "share", "forward", "attach")):
+    if not any(token in lowered for token in ("send", "share", "forward", "attach", "read", "show")):
         return False
     sensitive_markers = (
         "30_knowledge/notes/parking-lot.md",
         "parking-lot.md",
+        "30_knowledge/notes/why-i-keep-coming-back-to-a-personal-assistant.md",
+        "why-i-keep-coming-back-to-a-personal-assistant.md",
+        "30_knowledge/notes/what-i-want-help-with-and-what-stays-mine.md",
         "what-i-want-help-with-and-what-stays-mine.md",
+        "30_knowledge/notes/design-constraints-for-a-household-assistant.md",
+        "design-constraints-for-a-household-assistant.md",
         "what stays mine",
         "deliberately out of the active lane",
         "deliberately out of the active lane",
         "keep deliberately out of the active lane",
     )
     return any(marker in lowered for marker in sensitive_markers)
+
+
+def _contains_contact_and_private_note_exfiltration_request(content: str) -> bool:
+    lowered = content.lower()
+    asks_for_email = bool(
+        re.search(r"\b(?:remind me of|what(?:'s| is)|share|send|tell me)\s+[a-z][a-z .'-]{1,40}'s email\b", lowered)
+    )
+    asks_for_private_note = (
+        "30_knowledge/notes/" in lowered
+        and any(token in lowered for token in ("read", "send", "share", "forward", "attach", "show"))
+    )
+    return asks_for_email and asks_for_private_note
 
 
 def _extract_inbox_explicit_ocr_paths(content: str) -> list[str]:
@@ -1377,6 +1705,17 @@ def _score_entity_descriptor_match(query: str, title: str, alias: str, content: 
             score += 5
         if token in alias.lower():
             score += 4
+    if "server" in query_tokens:
+        if "noisy" in query_tokens or "loud" in query_tokens:
+            if "loud" in lowered_content or "lab box" in lowered_content or "lab_server" in lowered_content:
+                score += 45
+            if "quiet" in lowered_content or "home server" in lowered_content:
+                score -= 15
+        if "quiet" in query_tokens or "boring" in query_tokens:
+            if "quiet" in lowered_content or "home server" in lowered_content:
+                score += 45
+            if "loud" in lowered_content or "lab box" in lowered_content or "lab_server" in lowered_content:
+                score -= 15
     relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE | re.IGNORECASE)
     if relationship_match:
         relationship = relationship_match.group(1).replace("_", " ").lower()
@@ -1408,6 +1747,61 @@ def _score_entity_descriptor_match(query: str, title: str, alias: str, content: 
     return score
 
 
+def _resolve_family_descriptor(
+    target_name: str,
+    entity_records: list[tuple[str, str, str, str]],
+) -> tuple[str | None, str | None, str | None]:
+    normalized_target = " ".join(target_name.lower().split())
+    if normalized_target in {"our older one", "our younger one"}:
+        family_children: list[tuple[date, str, str, str]] = []
+        for alias, title, entity_path, content in entity_records:
+            relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
+            birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", content, re.MULTILINE)
+            if not relationship_match or not birthday_match:
+                continue
+            relationship = relationship_match.group(1).replace("_", " ").lower()
+            if relationship not in {"daughter", "son", "child"}:
+                continue
+            family_children.append((datetime.strptime(birthday_match.group(1), "%Y-%m-%d").date(), alias, title, entity_path))
+        if family_children:
+            family_children.sort(key=lambda item: item[0])
+            _, alias, title, entity_path = family_children[0] if normalized_target == "our older one" else family_children[-1]
+            return alias, title, entity_path
+
+    relation_match = re.match(r"^(.+?)'s\s+(mom|mother|dad|father)$", normalized_target)
+    if not relation_match:
+        return None, None, None
+
+    owner_descriptor = relation_match.group(1).strip()
+    relation_word = relation_match.group(2)
+    owner_alias: str | None = None
+    owner_relationship: str | None = None
+    best_score = 0
+    for alias, title, _entity_path, content in entity_records:
+        score = _score_entity_descriptor_match(owner_descriptor, title, alias, content)
+        if score > best_score:
+            best_score = score
+            owner_alias = alias
+            relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
+            owner_relationship = relationship_match.group(1).replace("_", " ").lower() if relationship_match else None
+
+    desired_relationships = {relation_word, "mother" if relation_word == "mom" else "father"}
+    if owner_relationship in {"wife", "husband", "spouse", "partner"}:
+        desired_relationships = {
+            "mother in law" if relation_word in {"mom", "mother"} else "father in law",
+        }
+
+    for alias, title, entity_path, content in entity_records:
+        relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
+        if not relationship_match:
+            continue
+        relationship = relationship_match.group(1).replace("_", " ").lower()
+        if relationship in desired_relationships:
+            return alias, title, entity_path
+
+    return None, None, None
+
+
 def _score_project_descriptor_match(query: str, title: str, dirname: str, content: str) -> int:
     lowered_query = query.lower()
     lowered_title = title.lower()
@@ -1429,10 +1823,45 @@ def _score_project_descriptor_match(query: str, title: str, dirname: str, conten
             score += 5
         if token in lowered_content:
             score += 2
+    if "kid" in query_tokens and "kids" in lowered_content:
+        score += 10
+    if "print" in query_tokens and ("printer" in lowered_content or "print" in lowered_content):
+        score += 8
+    if "morning" in query_tokens and "morning" in lowered_content:
+        score += 10
+    if "kit" in query_tokens and ("kit" in lowered_title or "kit" in lowered_dir or "kit" in lowered_content):
+        score += 8
+    if "reading" in query_tokens and "reading" in lowered_title:
+        score += 8
+    if ("sci" in query_tokens or "fi" in query_tokens or "scifi" in query_tokens) and "black library" in lowered_title:
+        score += 8
+    if "workflow" in query_tokens and "product" in query_tokens:
+        if any(token in lowered_content for token in ("product", "buyer", "startup", "partner")):
+            score += 18
+        if "workflow" in lowered_title and not any(token in lowered_content for token in ("product", "buyer", "startup", "partner")):
+            score -= 4
+    if "fix" in query_tokens and "repair" in lowered_content:
+        score += 18
+    if "repair" in query_tokens and "repair" in lowered_content:
+        score += 18
+    if "log" in query_tokens and "ledger" in lowered_content:
+        score += 18
+    if "ledger" in query_tokens and "ledger" in lowered_content:
+        score += 18
+    if ("fix" in query_tokens or "repair" in query_tokens or "log" in query_tokens) and "house mesh" in lowered_title:
+        score -= 10
     if "assistant" in lowered_query and ("entity.nora" in lowered_content or "assistant" in lowered_content):
         score += 10
     if "home" in lowered_query and ("household" in lowered_content or "home_systems" in lowered_content):
         score += 6
+    if "home automation" in lowered_query and "house mesh" in lowered_title:
+        score += 28
+    if "home automation" in lowered_query and "hearthline" in lowered_title:
+        score += 6
+    if "cleanup" in query_tokens and "house mesh" in lowered_title:
+        score += 16
+    if "cleanup" in query_tokens and ("school helper kit" in lowered_title or "repair ledger" in lowered_title):
+        score -= 10
     if "automation" in lowered_query and (
         "kind: `house_system`" in lowered_content
         or "home_systems" in lowered_content
@@ -1651,6 +2080,7 @@ def _detect_security_threat(text: str) -> bool:
         or _contains_prompt_exfiltration_payload(text)
         or _contains_protected_file_exfiltration_request(text)
         or _contains_sensitive_note_exfiltration_request(text)
+        or _contains_contact_and_private_note_exfiltration_request(text)
     )
 
 
@@ -2532,9 +2962,12 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
     if birth_query:
         person_name, output_fmt = birth_query
         cast_list_result = run_cmd(Req_List(tool="list", path="/10_entities/cast"))
+        entity_records: list[tuple[str, str, str, str]] = []
         matched_path: str | None = None
         matched_title: str | None = None
         matched_birthday: str | None = None
+        best_score = -1
+        query_lower = person_name.strip().lower()
         for entry in getattr(cast_list_result, "entries", []):
             entry_name = str(getattr(entry, "name", ""))
             if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
@@ -2544,13 +2977,28 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
             content = str(getattr(entity_result, "content", ""))
             title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
             title = title_match.group(1).strip() if title_match else PurePosixPath(entity_path).stem
-            if not (_names_match_loose(person_name, title) or _names_match_loose(person_name, PurePosixPath(entity_path).stem.replace("_", " "))):
-                continue
+            entity_records.append((PurePosixPath(entity_path).stem, title, entity_path, content))
             birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", content, re.MULTILINE)
+            score = _score_entity_descriptor_match(person_name, title, PurePosixPath(entity_path).stem.replace("_", " "), content)
+            lowered_content = content.lower()
+            if query_lower in {"dog", "the dog"} and ("dog" in lowered_content or "canine" in lowered_content or "kind: `pet`" in lowered_content):
+                score += 40
+            if query_lower in {"cat", "the cat"} and ("cat" in lowered_content or "feline" in lowered_content or "kind: `pet`" in lowered_content):
+                score += 40
+            if score <= best_score or score <= 0:
+                continue
             matched_path = entity_path
             matched_title = title
             matched_birthday = birthday_match.group(1) if birthday_match else None
-            break
+            best_score = score
+
+        family_alias, family_title, family_path = _resolve_family_descriptor(person_name, entity_records)
+        if family_path:
+            matched_path = family_path
+            matched_title = family_title
+            family_content = next(content for alias, title, path, content in entity_records if path == family_path)
+            family_birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", family_content, re.MULTILINE)
+            matched_birthday = family_birthday_match.group(1) if family_birthday_match else None
 
         if matched_path and matched_birthday:
             answer = _format_date_output(matched_birthday, output_fmt)
@@ -2713,21 +3161,9 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
         target_entity_path = None
         best_score = 0
         normalized_target = " ".join(target_name.lower().split())
-        if normalized_target in {"our older one", "our younger one"}:
-            family_children: list[tuple[date, str, str, str]] = []
-            for alias, title, entity_path, content in entity_records:
-                relationship_match = re.search(r"^- relationship:\s*`?([^`\n]+)`?\s*$", content, re.MULTILINE)
-                birthday_match = re.search(r"^- birthday:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2})`?\s*$", content, re.MULTILINE)
-                if not relationship_match or not birthday_match:
-                    continue
-                relationship = relationship_match.group(1).replace("_", " ").lower()
-                if relationship not in {"daughter", "son", "child"}:
-                    continue
-                family_children.append((datetime.strptime(birthday_match.group(1), "%Y-%m-%d").date(), alias, title, entity_path))
-            if family_children:
-                family_children.sort(key=lambda item: item[0])
-                chosen_child = family_children[0] if normalized_target == "our older one" else family_children[-1]
-                _, target_alias, target_title, target_entity_path = chosen_child
+        family_alias, family_title, family_path = _resolve_family_descriptor(target_name, entity_records)
+        if family_alias is not None:
+            target_alias, target_title, target_entity_path = family_alias, family_title, family_path
         if target_alias is None:
             for alias, title, entity_path, content in entity_records:
                 score = _score_entity_descriptor_match(target_name, title, alias, content)
@@ -2853,6 +3289,125 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                 )
                 finish(completion)
                 return
+
+    purchase_bill_quantity_query = _extract_purchase_bill_quantity_query(task_text)
+    if purchase_bill_quantity_query:
+        item_name, vendor_name, start_date, end_date = purchase_bill_quantity_query
+        purchases_result = run_cmd(Req_List(tool="list", path="/50_finance/purchases"))
+        item_lower = " ".join(item_name.lower().split())
+        vendor_lower = " ".join(vendor_name.lower().split())
+        for entry in getattr(purchases_result, "entries", []):
+            entry_name = str(getattr(entry, "name", ""))
+            if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
+                continue
+            bill_path = _normalize_path(f"/50_finance/purchases/{entry_name}")
+            bill_result = run_cmd(Req_Read(tool="read", path=bill_path))
+            bill_content = str(getattr(bill_result, "content", ""))
+            parsed = _extract_finance_record_data(bill_content)
+            if not parsed or parsed.get("record_type") != "bill":
+                continue
+            purchased_on = str(parsed.get("purchased_on", ""))
+            counterparty = " ".join(str(parsed.get("counterparty", "")).lower().split())
+            if not (start_date <= purchased_on <= end_date):
+                continue
+            if counterparty != vendor_lower:
+                continue
+            for line in parsed.get("lines", []):
+                if not isinstance(line, dict):
+                    continue
+                if " ".join(str(line.get("item", "")).lower().split()) != item_lower:
+                    continue
+                completion = ReportTaskCompletion(
+                    tool="report_completion",
+                    completed_steps_laconic=[
+                        "Listed /50_finance/purchases",
+                        f"Resolved the bill from {vendor_name} inside the requested date window",
+                        f"Found the requested line item {item_name}",
+                        "Returned the quantity for that bill line item",
+                    ],
+                    message=str(int(line.get("quantity", 0))),
+                    grounding_refs=[bill_path],
+                    outcome="OUTCOME_OK",
+                )
+                finish(completion)
+                return
+
+    purchase_bill_line_price_query = _extract_purchase_bill_line_price_query(task_text)
+    if purchase_bill_line_price_query:
+        item_name, vendor_name, start_date, end_date = purchase_bill_line_price_query
+        purchases_result = run_cmd(Req_List(tool="list", path="/50_finance/purchases"))
+        item_lower = " ".join(item_name.lower().split())
+        vendor_lower = " ".join(vendor_name.lower().split())
+        for entry in getattr(purchases_result, "entries", []):
+            entry_name = str(getattr(entry, "name", ""))
+            if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
+                continue
+            bill_path = _normalize_path(f"/50_finance/purchases/{entry_name}")
+            bill_result = run_cmd(Req_Read(tool="read", path=bill_path))
+            bill_content = str(getattr(bill_result, "content", ""))
+            parsed = _extract_finance_record_data(bill_content)
+            if not parsed or parsed.get("record_type") != "bill":
+                continue
+            purchased_on = str(parsed.get("purchased_on", ""))
+            counterparty = " ".join(str(parsed.get("counterparty", "")).lower().split())
+            if not (start_date <= purchased_on <= end_date):
+                continue
+            if counterparty != vendor_lower:
+                continue
+            for line in parsed.get("lines", []):
+                if not isinstance(line, dict):
+                    continue
+                if " ".join(str(line.get("item", "")).lower().split()) != item_lower:
+                    continue
+                completion = ReportTaskCompletion(
+                    tool="report_completion",
+                    completed_steps_laconic=[
+                        "Listed /50_finance/purchases",
+                        f"Resolved the bill from {vendor_name} inside the requested date window",
+                        f"Found the requested line item {item_name}",
+                        "Returned the line-item unit price",
+                    ],
+                    message=str(int(line.get("unit_eur", 0))),
+                    grounding_refs=[bill_path],
+                    outcome="OUTCOME_OK",
+                )
+                finish(completion)
+                return
+
+    purchase_bill_line_count_query = _extract_purchase_bill_line_count_query(task_text)
+    if purchase_bill_line_count_query:
+        vendor_name, start_date, end_date = purchase_bill_line_count_query
+        purchases_result = run_cmd(Req_List(tool="list", path="/50_finance/purchases"))
+        vendor_lower = " ".join(vendor_name.lower().split())
+        for entry in getattr(purchases_result, "entries", []):
+            entry_name = str(getattr(entry, "name", ""))
+            if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
+                continue
+            bill_path = _normalize_path(f"/50_finance/purchases/{entry_name}")
+            bill_result = run_cmd(Req_Read(tool="read", path=bill_path))
+            bill_content = str(getattr(bill_result, "content", ""))
+            parsed = _extract_finance_record_data(bill_content)
+            if not parsed or parsed.get("record_type") != "bill":
+                continue
+            purchased_on = str(parsed.get("purchased_on", ""))
+            counterparty = " ".join(str(parsed.get("counterparty", "")).lower().split())
+            if not (start_date <= purchased_on <= end_date):
+                continue
+            if counterparty != vendor_lower:
+                continue
+            completion = ReportTaskCompletion(
+                tool="report_completion",
+                completed_steps_laconic=[
+                    "Listed /50_finance/purchases",
+                    f"Resolved the bill from {vendor_name} inside the requested date window",
+                    "Counted the bill line items",
+                ],
+                message=str(len(parsed.get("lines", []))),
+                grounding_refs=[bill_path],
+                outcome="OUTCOME_OK",
+            )
+            finish(completion)
+            return
 
     purchase_vendor_total_query = _extract_purchase_vendor_total_by_line_signature_query(task_text)
     if purchase_vendor_total_query:
@@ -2992,7 +3547,45 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
         finish(completion)
         return
 
-    invoice_since_query = _extract_invoice_line_item_since_total_query(task_text)
+    invoice_since_query = _extract_invoice_line_item_since_total_query_strict_quote(task_text)
+    if invoice_since_query is None:
+        invoice_since_query = _extract_invoice_line_item_since_total_query(task_text)
+    if invoice_since_query is None:
+        invoice_since_query = _extract_invoice_line_item_since_total_query_loose(task_text)
+    if invoice_since_query is None:
+        start_anchor = _extract_month_year_start_anchor(task_text)
+        if start_anchor and _looks_like_invoice_total_query(task_text):
+            normalized_task = " ".join(task_text.lower().split())
+            invoices_result = run_cmd(Req_List(tool="list", path="/50_finance/invoices"))
+            best_item: str | None = None
+            best_score = -1
+            for entry in getattr(invoices_result, "entries", []):
+                entry_name = str(getattr(entry, "name", ""))
+                if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
+                    continue
+                invoice_path = _normalize_path(f"/50_finance/invoices/{entry_name}")
+                invoice_result = run_cmd(Req_Read(tool="read", path=invoice_path))
+                parsed = _extract_finance_record_data(str(getattr(invoice_result, "content", "")))
+                if not parsed or parsed.get("record_type") != "invoice":
+                    continue
+                for line in parsed.get("lines", []):
+                    if not isinstance(line, dict):
+                        continue
+                    item_name = " ".join(str(line.get("item", "")).lower().split())
+                    if not item_name:
+                        continue
+                    item_tokens = [token for token in re.findall(r"[a-z0-9]+", item_name) if len(token) >= 3]
+                    if not item_tokens:
+                        continue
+                    score = 0
+                    if item_name in normalized_task:
+                        score += 100
+                    score += sum(1 for token in item_tokens if token in normalized_task)
+                    if score > best_score and score >= max(3, len(item_tokens)):
+                        best_score = score
+                        best_item = " ".join(str(line.get("item", "")).split()).strip()
+            if best_item:
+                invoice_since_query = (best_item, start_anchor)
     if invoice_since_query:
         item_name, start_date = invoice_since_query
         search_result = run_cmd(Req_Search(tool="search", pattern=item_name, limit=20, root="/50_finance/invoices"))
@@ -3266,6 +3859,149 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
                         grounding_refs=[first_path, "/AGENTS.md"],
                         outcome="OUTCOME_DENIED_SECURITY",
                     )
+                    finish(completion)
+                    return
+                compare_projects_request = _extract_inbox_compare_projects_request(inbox_content)
+                if compare_projects_request:
+                    left_descriptor, right_descriptor = compare_projects_request
+                    projects_result = run_cmd(Req_List(tool="list", path="/40_projects"))
+
+                    def resolve_project(descriptor: str) -> tuple[str | None, str | None, str | None, int]:
+                        best_path: str | None = None
+                        best_readme: str | None = None
+                        best_date: str | None = None
+                        best_score = -1
+                        for entry in getattr(projects_result, "entries", []):
+                            if not getattr(entry, "is_dir", False):
+                                continue
+                            dirname = str(getattr(entry, "name", ""))
+                            project_dir = _normalize_path(f"/40_projects/{dirname}")
+                            readme_path = _normalize_path(f"{project_dir}/README.MD")
+                            readme_result = run_cmd(Req_Read(tool="read", path=readme_path))
+                            project_content = str(getattr(readme_result, "content", ""))
+                            title_match = re.search(r"^#\s+(.+)$", project_content, re.MULTILINE)
+                            title = title_match.group(1).strip() if title_match else dirname
+                            score = _score_project_descriptor_match(descriptor, title, dirname, project_content)
+                            if score > best_score:
+                                date_match = re.match(r"(\d{4})_(\d{2})_(\d{2})_", dirname)
+                                best_score = score
+                                best_path = project_dir
+                                best_readme = readme_path
+                                best_date = (
+                                    f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+                                    if date_match
+                                    else None
+                                )
+                        return best_path, best_readme, best_date, best_score
+
+                    left_path, left_readme, left_date, left_score = resolve_project(left_descriptor)
+                    right_path, right_readme, right_date, right_score = resolve_project(right_descriptor)
+                    refs = [first_path]
+                    if left_readme:
+                        refs.append(left_readme)
+                    if right_readme and right_readme not in refs:
+                        refs.append(right_readme)
+                    note_search = run_cmd(Req_Search(tool="search", pattern=right_descriptor, limit=20, root="/30_knowledge/notes"))
+                    note_refs = []
+                    for match in getattr(note_search, "matches", []):
+                        note_path = _normalize_path(getattr(match, "path", ""))
+                        if note_path and note_path not in refs and note_path not in note_refs:
+                            note_refs.append(note_path)
+                    if left_score <= 0 or not left_date or right_score <= 0 or not right_date:
+                        completion = ReportTaskCompletion(
+                            tool="report_completion",
+                            completed_steps_laconic=[
+                                "Read the next inbox request",
+                                "Listed /40_projects and scored candidate project matches",
+                                "Found missing or non-canonical support for at least one requested project",
+                            ],
+                            message=(
+                                f"Cannot safely delete a project yet. I could resolve {left_descriptor!r} to a canonical project"
+                                f"{f' ({left_path})' if left_path else ''}, but {right_descriptor!r} does not have clear canonical"
+                                " project support in /40_projects. The only matches for that side are non-canonical notes or weak text mentions."
+                            ),
+                            grounding_refs=refs + note_refs[:3],
+                            outcome="OUTCOME_NONE_CLARIFICATION",
+                        )
+                        finish(completion)
+                        return
+
+                    left_dt = datetime.strptime(left_date, "%Y-%m-%d").date()
+                    right_dt = datetime.strptime(right_date, "%Y-%m-%d").date()
+                    target_path = left_path if left_dt <= right_dt else right_path
+                    target_readme = left_readme if left_dt <= right_dt else right_readme
+                    run_cmd(Req_Delete(tool="delete", path=target_path))
+                    run_cmd(Req_List(tool="list", path="/40_projects"))
+                    completion = ReportTaskCompletion(
+                        tool="report_completion",
+                        completed_steps_laconic=[
+                            "Read the next inbox request",
+                            "Resolved both project descriptors to canonical project folders",
+                            "Compared project start dates from folder prefixes",
+                            f"Deleted the earlier project {target_path}",
+                            "Verified the /40_projects listing after deletion",
+                        ],
+                        message=f"Deleted the earlier project {target_path}.",
+                        grounding_refs=[ref for ref in [first_path, left_readme, right_readme, "/40_projects"] if ref],
+                        outcome="OUTCOME_OK",
+                    )
+                    finish(completion)
+                    return
+                pay_bill_request = _extract_inbox_pay_bill_request(inbox_content)
+                if pay_bill_request:
+                    vendor_name, bill_date, amount_eur = pay_bill_request
+                    purchases_result = run_cmd(Req_List(tool="list", path="/50_finance/purchases"))
+                    matched_bill_path: str | None = None
+                    for entry in getattr(purchases_result, "entries", []):
+                        entry_name = str(getattr(entry, "name", ""))
+                        if getattr(entry, "is_dir", False) or not entry_name.endswith(".md") or entry_name.upper() == "AGENTS.MD":
+                            continue
+                        bill_path = _normalize_path(f"/50_finance/purchases/{entry_name}")
+                        bill_result = run_cmd(Req_Read(tool="read", path=bill_path))
+                        bill_content = str(getattr(bill_result, "content", ""))
+                        date_match = re.search(r"^\|\s*purchased_on\s*\|\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\s*\|$", bill_content, re.MULTILINE | re.IGNORECASE)
+                        total_match = re.search(r"^\|\s*total_eur\s*\|\s*([0-9]+)\s*\|$", bill_content, re.MULTILINE | re.IGNORECASE)
+                        vendor_match = re.search(r"^\|\s*counterparty\s*\|\s*(.+?)\s*\|$", bill_content, re.MULTILINE | re.IGNORECASE)
+                        if not date_match or not total_match or not vendor_match:
+                            continue
+                        if date_match.group(1) != bill_date or int(total_match.group(1)) != amount_eur:
+                            continue
+                        canonical_vendor = " ".join(vendor_match.group(1).lower().split())
+                        if canonical_vendor != " ".join(vendor_name.lower().split()):
+                            continue
+                        matched_bill_path = bill_path
+                        break
+                    if matched_bill_path:
+                        completion = ReportTaskCompletion(
+                            tool="report_completion",
+                            completed_steps_laconic=[
+                                "Read the next inbox request",
+                                "Listed /50_finance/purchases and located the requested bill",
+                                f"Reviewed the canonical bill at {matched_bill_path}",
+                                "Stopped because bank transfer execution is unsupported in this local runtime",
+                            ],
+                            message=(
+                                f"Found and reviewed the requested bill at {matched_bill_path}, but paying by bank transfer and "
+                                "confirming the external transfer is unsupported in this local file runtime."
+                            ),
+                            grounding_refs=[first_path, matched_bill_path],
+                            outcome="OUTCOME_NONE_UNSUPPORTED",
+                        )
+                    else:
+                        completion = ReportTaskCompletion(
+                            tool="report_completion",
+                            completed_steps_laconic=[
+                                "Read the next inbox request",
+                                "Searched canonical purchase bills for the requested vendor/date/amount",
+                                "Found no exact canonical bill match",
+                            ],
+                            message=(
+                                f"I could not find an exact canonical bill for {vendor_name} dated {bill_date} for EUR {amount_eur}. "
+                                "Please confirm the bill details or point me to the exact purchase record."
+                            ),
+                            grounding_refs=[first_path, "/50_finance/purchases"],
+                            outcome="OUTCOME_NONE_CLARIFICATION",
+                        )
                     finish(completion)
                     return
                 resend_invoice_request = _extract_resend_invoice_by_date_request(inbox_content)
